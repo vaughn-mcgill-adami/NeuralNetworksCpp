@@ -1,0 +1,35 @@
+/*
+ * Random.cpp
+ *
+ *  Created on: Feb 4, 2017
+ *      Random::randn is adapted from source here: https://phoxis.org/2013/05/04/generating-random-numbers-from-normal-distribution-in-c/
+ *      Thanks Phoxis!
+ *      Random::randshuffle is mine
+ */
+#include "Random.h"
+#include <ctime>
+
+double Random::randn (double mu, double sigma)
+{
+	std::default_random_engine generator;
+	std::normal_distribution<double> distribution(0.0,1.0);
+	return distribution(generator)
+}
+
+arma::cube Random::randshuffle(arma::cube x, unsigned int seed)
+{
+	srand(seed);
+	arma::mat temp;
+	unsigned int n;
+
+	for(unsigned int i = 0; i<(x.n_rows-1); i++)
+	{
+		n = rand()%(x.n_rows-1);
+		temp = x(arma::span(n),arma::span::all,arma::span::all);
+		x(arma::span(n),arma::span::all,arma::span::all) = x(arma::span(n+1),arma::span::all,arma::span::all);
+		x(arma::span(n+1),arma::span::all,arma::span::all) = temp;
+	}
+
+	return x;
+}
+

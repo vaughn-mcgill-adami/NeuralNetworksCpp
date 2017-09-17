@@ -1,0 +1,219 @@
+/*
+ * Author: Vaughn McGill-Adami
+ */
+
+#include "network.h"
+
+//Works does not need to be vectorized because it only happens once lol
+//Unless there are a lot of big networks being used all at once or something then
+//I might want to vectorize
+Network::Network(arma::Col<unsigned int> imput_sizes){
+	sizes = imput_sizes;
+	num_layers = sizes.size();
+
+	biases.set_size(num_layers,sizes.max());
+	biases.fill(0);
+
+	weights.set_size(num_layers,sizes.max(),sizes.max());
+	weights.zeros();
+	for(unsigned int i = 1; i<num_layers; i++)
+	{
+		for(unsigned int j = 0; j<sizes(i); j++)
+		{
+			biases(i,j) = 0.0;//randn(0.0,1.0);
+			for(unsigned int k = 0; k<sizes(i-1);k++)
+			{
+				weights(i,j,k) = randn(0.0,1.0);
+			}
+		}
+	}
+}
+
+//Works Vectorized in update 0.4
+matpair Network::Feedfoward(arma::vec a)
+{
+	a.resize(sizes.max());
+	
+	arma::mat activations(num_layers, sizes.max());
+	arma::mat z(num_layers,sizes.max());
+	
+	activations.zeros();
+	z.zeros();
+
+	activations.row(0) = a.t();
+
+	matpair ret;
+
+	for(unsigned int i = 1; i<(num_layers); i++)
+	{
+		for(unsigned int j=0; j<sizes(i); j++)
+		{
+			double sum = 0;
+			for(unsigned int k=0; k<sizes(i-1); k++)
+			{
+				sum = sum + weights(i,j,k)*activations(i-1,k);
+			}
+			z(i,j) = sum + biases(i,j);
+			activations(i,j) = sigmoid(z(i,j));
+		}
+	}
+	ret.z = z;
+	ret.a = activations;
+	return ret;
+}
+
+//Works
+cubeandmat Network::backprop(arma::vec x, arma::vec y, arma::vec (*costdelta)(arma::vec z, arma::vec a, arma::vec y)){
+	arma::cube nabla_w = weights;
+	nabla_w.zeros();
+	arma::mat nabla_b = biases;
+	nabla_b.zeros();
+
+	matpair temp = Feedfoward(x);
+
+	arma::mat z = temp.z;
+	arma::mat activations = temp.a;
+
+	arma::vec delta = (*costdelta)(z.row(num_layers-1).t(), activations.row(num_layers-1).t(), y);
+	nabla_b.row(num_layers-1) = delta.t();
+
+	cubeandmat ret;
+
+	for(unsigned int j = 0; j < sizes(num_layers-1); j++)
+	{
+		for(unsigned int k = 0; k<sizes(num_layers-2); k++)
+		{
+			nabla_w(num_layers-1,j,k) = activations(num_layers-2,k)*delta(j);
+		}
+	}
+
+	arma::mat tempmat;
+	for(unsigned int i = num_layers - 2; i>0; i=i-1)
+	{
+		tempmat = weights(arma::span(i+1),arma::span::all,arma::span::all);
+		delta = ((tempmat.t())*delta)%sigmoidDerivative(z.row(i).t());
+		nabla_b.row(i) = delta.t();
+		for(unsigned int j = 0; j < sizes(i); j++)
+		{
+			for(unsigned int k = 0; k<sizes(i-1); k++)
+			{
+				nabla_w(i,j,k) = activations(i-1,k)*delta(j);
+			}
+		}	
+	}
+	ret.w = nabla_w;
+	ret.b = nabla_b;
+	return ret;
+}
+
+//Works
+void Network::update_mini_batch(arma::cube mini_batch, double eta, arma::vec (*costdelta)(arma::vec z, arma::vec a, arma::vec y), double reg, unsigned int numtrain)
+{
+	//                                     (trial number, 0 = x 1 = y, must be of size sizes.max())
+	arma::cube nabla_w = weights;
+	nabla_w.zeros();
+	arma::mat nabla_b = biases;
+	nabla_b.zeros();
+
+	arma::cube delta_nabla_w = nabla_w;
+	arma::mat delta_nabla_b = nabla_b;
+
+	cubeandmat temp;
+
+	arma::vec x;
+	arma::vec y;
+
+	for(unsigned int n = 0; n<mini_batch.n_rows; n++)
+	{
+		x = mini_batch(arma::span(n),arma::span(0),arma::span::all);
+		y = mini_batch(arma::span(n),arma::span(1),arma::span::all);
+		//?
+		temp = backprop(x,y,costdelta);
+
+		delta_nabla_w = temp.w;
+		delta_nabla_b = temp.b;
+
+		nabla_w = nabla_w + delta_nabla_w;
+		nabla_b = nabla_b + delta_nabla_b;
+	}
+	//        (regularization)*weights 
+	weights = (1-(eta*(reg/(numtrain))))*weights - ((eta/(mini_batch.n_rows))*nabla_w);
+	biases = biases - ((eta/(mini_batch.n_rows))*nabla_b);
+}
+
+//Works?
+void Network::SGD(arma::cube batch, unsigned int epochs,
+		  unsigned int minibatch_size,
+		  double eta,
+		  arma::vec (*costdelta)(arma::vec z, arma::vec a, arma::vec y),
+		  double reg,
+		  arma::cube test,
+		  bool logging)
+{
+	unsigned int n = batch.n_rows;
+        arma::cube minibatch;
+	if(n%(minibatch_size) == 0)
+	{
+		if(logging){
+			for(unsigned int a = 0; a < epochs; a++)
+			{
+				for(unsigned int b = 0; b < (n/minibatch_size); b++)
+				{
+					randshuffle(batch);
+					minibatch = batch(arma::span((minibatch_size)*b,(minibatch_size)*(b+1)-1),arma::span::all,arma::span::all);
+					update_mini_batch(minibatch,eta,costdelta, reg,n);
+				}
+				std::cout << "Epoch " << a << " Test data accuracy:" << evaluate(test) << "\n" << "Cost:" << cost(batch,Costs::QuadraticCost) << "\n";
+			}
+		}
+		else
+		{
+			for(unsigned int a = 0; a < epochs; a++)
+			{
+				for(unsigned int b = 0; b < (n/minibatch_size); b++)
+				{
+					randshuffle(batch);
+					minibatch = batch(arma::span((minibatch_size)*b,(minibatch_size)*(b+1)-1),arma::span::all,arma::span::all);
+					update_mini_batch(minibatch,eta,costdelta, reg,n);
+				}
+			}
+		}
+	}
+	else
+	{
+		std::cout << "ERROR: minibatch_size must be evenly divisible into the batch size\n";
+	}
+}
+
+double Network::evaluate(arma::cube test)
+{
+	double sum = 0;
+	for(unsigned int i = 0; i<test.n_rows; i++)
+	{
+		arma::vec input = test(arma::span(i),arma::span(0),arma::span::all);
+		arma::vec ideal = test(arma::span(i),arma::span(1),arma::span::all);
+		matpair temp = Feedfoward(input);
+		arma::rowvec output = temp.a.row((temp.a.n_rows)-1);
+                arma::vec out = output.t();
+		if(out.index_max() == ideal.index_max())
+		{
+			sum = sum + 1;
+		}
+	}
+	return (sum);
+}
+
+double Network::cost(arma::cube batch,double (*costfunction)(arma::vec a, arma::vec y))
+{
+	double sum = 0;
+	for(unsigned int i = 0; i<batch.n_rows; i++)
+	{
+		arma::vec x = batch(arma::span(i),arma::span(0),arma::span::all);
+		arma::vec y = batch(arma::span(i),arma::span(1),arma::span::all);
+		matpair temp = Feedfoward(x);
+		arma::rowvec a = temp.a.row(temp.a.n_rows - 1);
+		sum = sum + (*costfunction)((a.t()),y);
+	}
+	return (sum/(static_cast<double>(batch.n_rows)));
+}
+

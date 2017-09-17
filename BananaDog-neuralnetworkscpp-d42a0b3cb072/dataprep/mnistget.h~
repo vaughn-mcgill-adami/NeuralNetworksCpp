@@ -1,0 +1,19 @@
+#ifndef MNISTGET_H_
+#define MNISTGET_H_
+
+#include <armadillo>
+#include <iostream>
+#include <vector>
+//#include <opencv2/opencv.hpp>
+
+using namespace std;
+
+class MnistGet
+{
+public:
+	static int reverseInt(int i);
+	static arma::cube read_mnist();
+	//static std::vector<cv::Mat> read_mnistimg();
+	static arma::cube read_labels();
+};
+#endif
